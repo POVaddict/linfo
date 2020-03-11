@@ -1,7 +1,7 @@
 #!/bin/sh
 #
-# linfo 0.28 -- get info from various Linux systems
-# 3/2019 Christian Perle <chris@linuxinfotag.de>
+# linfo 0.29 -- get info from various Linux systems
+# 3/2020 Christian Perle <chris@linuxinfotag.de>
 #
 # Licensed under GPLv2 or later
 
@@ -39,7 +39,7 @@ conflist=" \
 	/etc/X11/xorg* /etc/resolv.conf /proc/meminfo \
 	/proc/interrupts /proc/ioports /proc/iomem /proc/cmdline /proc/net/arp \
 	/proc/net/wireless /proc/devices /proc/partitions /proc/version \
-	/proc/cpuinfo /proc/asound/cards /proc/asound/card0/codec#0 "
+	/proc/cpuinfo /proc/asound/cards /proc/asound/card*/codec#* "
 
 # include debian specific files
 if [ $DISTRO = debian ] ; then
@@ -58,7 +58,12 @@ for file in $conflist
 do
 	if [ -r $file ] ; then
 		DESTDIR=`dirname $file`
-		DESTDIR=${DESTDIR#?}
+		# special handling for files in /
+		if [ -z "$DESTDIR" ] ; then
+			DESTDIR="./"
+		else
+			DESTDIR=${DESTDIR#?}
+		fi
 		mkdir -p $DESTDIR
 		cp $file $DESTDIR
 	fi
@@ -67,6 +72,11 @@ done
 # loaded modules
 lsmod > loaded.modules 2>/dev/null
 [ $? != 0 ] && cat /proc/modules > loaded.modules
+
+# lshw
+lshw -businfo -numeric > lshw-businfo-numeric 2>/dev/null
+lshw -businfo > lshw-businfo 2>/dev/null
+lshw -numeric > lshw.txt 2>/dev/null
 
 # PCI devices
 echo "----- [ lspci ] -----" > pci.devices
@@ -95,6 +105,10 @@ done
 # USB devices
 echo "----- [ lsusb ] -----" >> usb.devices
 lsusb >> usb.devices 2>/dev/null
+echo "----- [ lsusb -v] -----" >> usb.devices
+lsusb -v >> usb.devices 2> /dev/null
+echo "----- [ busybox lsusb ] -----" >> usb.devices
+busybox lsusb >> usb.devices 2>/dev/null
 echo "----- [ usb.devices ] -----" >> usb.devices
 cat /sys/kernel/debug/usb/devices >> usb.devices 2>/dev/null
 
@@ -126,7 +140,8 @@ ip -6 route > ip6_route
 ip neigh > ip_neigh
 
 # uptime
-uptime > uptime
+uptime > uptime 2>/dev/null
+[ $? != 0 ] && cat /proc/uptime > uptime
 
 # kernel config
 # /proc/config.gz is more reliable than /usr/src/linux/.config
@@ -153,13 +168,15 @@ ps axf > process.tree 2>/dev/null
 [ $? != 0 ] && pstree -p > process.tree 2>/dev/null
 
 # process list
-ps auxww > running.processes 2>/dev/null
-[ $? != 0 ] && ps > running.processes
+ps auxww > process.list 2>/dev/null
+[ $? != 0 ] && ps w > process.list
 
 # network connections
 netstat --inet -nap > connections 2>/dev/null
 netstat --inet6 -nap >> connections 2>/dev/null
 [ $? != 0 ] && netstat -nautp > connections 2>/dev/null
+[ $? != 0 ] && busybox netstat -nautp > connections 2>/dev/null
+[ $? != 0 ] && busybox netstat -naut > connections 2>/dev/null
 )
 
 tar czf linf.tgz linf
