@@ -1,0 +1,168 @@
+#!/bin/sh
+#
+# linfo 0.28 -- get info from various Linux systems
+# 3/2019 Christian Perle <chris@linuxinfotag.de>
+#
+# Licensed under GPLv2 or later
+
+# set PATH to include /sbin and friends
+export PATH=/bin:/usr/bin:/sbin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+# english please
+export LANG="C"
+
+# we use internal dirname
+dirname()
+{
+	echo ${1%/*}
+}
+
+echo "getting system info..."
+
+# which distro are we running on?
+[ -f /etc/debian_version ] && DISTRO=debian
+[ -f /etc/redhat-release ] && DISTRO=redhat
+# use debian as default
+[ -z $DISTRO ] && DISTRO=debian
+
+rm -f linf.tgz
+mkdir linf
+
+(
+cd linf
+
+# config and proc files
+conflist=" \
+	/etc/modules /etc/modules.conf /etc/issue \
+	/etc/lilo.conf /boot/grub/menu.lst /boot/grub/grub.cfg /etc/fstab \
+	/etc/inittab /etc/rc.local /etc/inetd.conf \
+	/etc/hosts /var/log/XF*.log /var/log/Xorg*.log /etc/XF86* /etc/X11/XF86* \
+	/etc/X11/xorg* /etc/resolv.conf /proc/meminfo \
+	/proc/interrupts /proc/ioports /proc/iomem /proc/cmdline /proc/net/arp \
+	/proc/net/wireless /proc/devices /proc/partitions /proc/version \
+	/proc/cpuinfo /proc/asound/cards /proc/asound/card0/codec#0 "
+
+# include debian specific files
+if [ $DISTRO = debian ] ; then
+	conflist="$conflist /etc/debian_version /etc/network/interfaces "
+fi
+
+# include redhat specific files
+if [ $DISTRO = redhat ] ; then
+	conflist="$conflist /etc/redhat-release \
+	/etc/sysconfig/network /etc/sysconfig/network-scripts/ifcfg-eth? \
+	/etc/sysconfig/static-routes /etc/rc.d/rc.local "
+fi
+
+# copy files in conflist
+for file in $conflist
+do
+	if [ -r $file ] ; then
+		DESTDIR=`dirname $file`
+		DESTDIR=${DESTDIR#?}
+		mkdir -p $DESTDIR
+		cp $file $DESTDIR
+	fi
+done
+
+# loaded modules
+lsmod > loaded.modules 2>/dev/null
+[ $? != 0 ] && cat /proc/modules > loaded.modules
+
+# PCI devices
+echo "----- [ lspci ] -----" > pci.devices
+lspci -v -nn >> pci.devices 2>/dev/null
+echo "----- [ busybox lspci ] -----" >> pci.devices
+busybox lspci -mk >> pci.devices 2>/dev/null
+echo "----- [ procbuspci ] -----" >> pci.devices
+cat /proc/bus/pci/devices >> pci.devices
+
+# PCI paths of network devices
+(
+cd /sys/class/net
+for NIC in *
+do
+	DRV=$(readlink ${NIC}/device/driver 2>/dev/null)
+	if [ -z "${DRV}" ] ; then
+		continue
+	fi
+	VEND=$(cat ${NIC}/device/vendor)
+	PROD=$(cat ${NIC}/device/device)
+	DEVPATH=$(readlink ${NIC})
+	echo "${DEVPATH} ${VEND}:${PROD} ${DRV}"
+done
+) > pci.netdev
+
+# USB devices
+echo "----- [ lsusb ] -----" >> usb.devices
+lsusb >> usb.devices 2>/dev/null
+echo "----- [ usb.devices ] -----" >> usb.devices
+cat /sys/kernel/debug/usb/devices >> usb.devices 2>/dev/null
+
+# DMI bios entries
+dmidecode > dmibios 2>/dev/null
+if [ $? != 0 ] ; then
+	(cd /sys/class/dmi/id 2>/dev/null && grep . * 2>/dev/null) > dmibios
+fi
+
+# kernel messages
+[ -r /var/log/dmesg ] && cat /var/log/dmesg > dmesg
+echo "----- [ dmesg buffer ] -----" >> dmesg
+dmesg >> dmesg
+
+# filesystem usage
+df -T > df 2>/dev/null
+[ $? != 0 ] && df > df
+
+# mounts
+cat /proc/mounts > mounted.filesystems
+
+# hostname
+hostname > hostname
+
+# network config
+ip addr > ip_address
+ip route > ip_route
+ip -6 route > ip6_route
+ip neigh > ip_neigh
+
+# uptime
+uptime > uptime
+
+# kernel config
+# /proc/config.gz is more reliable than /usr/src/linux/.config
+if [ -r /proc/config.gz ] ; then
+	gzip -cd /proc/config.gz > kernel.config.proc 2>/dev/null
+elif [ -r "/lib/modules/`uname -r`/build/.config" ] ; then
+	cp "/lib/modules/`uname -r`/build/.config" kernel.config.src
+elif [ -r "/boot/config-`uname -r`" ] ; then
+	cp "/boot/config-`uname -r`" kernel.config.boot
+fi
+
+# distro dependent package list
+if [ $DISTRO = debian ] ; then
+	COLUMNS=400 dpkg -l 2>/dev/null | tr -s " " > package.list
+else
+	rpm -qa 2>/dev/null | sort > package.list
+fi
+
+# visit the /usr/local zoo
+ls /usr/local/bin /usr/local/sbin > usrlocal.list 2>/dev/null
+
+# process tree
+ps axf > process.tree 2>/dev/null
+[ $? != 0 ] && pstree -p > process.tree 2>/dev/null
+
+# process list
+ps auxww > running.processes 2>/dev/null
+[ $? != 0 ] && ps > running.processes
+
+# network connections
+netstat --inet -nap > connections 2>/dev/null
+netstat --inet6 -nap >> connections 2>/dev/null
+[ $? != 0 ] && netstat -nautp > connections 2>/dev/null
+)
+
+tar czf linf.tgz linf
+rm -rf linf
+echo "result saved in linf.tgz"
+echo "done."
