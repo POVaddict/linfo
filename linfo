@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# linfo 0.29 -- get info from various Linux systems
+# linfo 0.30 -- get info from various Linux systems
 # 3/2020 Christian Perle <chris@linuxinfotag.de>
 #
 # Licensed under GPLv2 or later
@@ -131,7 +131,8 @@ df -T > df 2>/dev/null
 cat /proc/mounts > mounted.filesystems
 
 # hostname
-hostname > hostname
+hostname > hostname 2>/dev/null
+[ $? != 0 ] && cat /proc/sys/kernel/hostname > hostname
 
 # network config
 ip addr > ip_address
